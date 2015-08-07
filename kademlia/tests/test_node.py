@@ -1,38 +1,57 @@
 import random
 import hashlib
+from struct import pack
 
 from twisted.trial import unittest
 
-from kademlia.node import UnvalidatedNode, ValidatedNode, NodeHeap, NodeValidationError
+from kademlia.node import (
+    UnvalidatedNode, ValidatedNode, OwnNode, NodeHeap, NodeValidationError
+)
 from kademlia.tests.utils import mknode
 
 
 class NodeTest(unittest.TestCase):
+    def test_idSize(self):
+        self.assertEqual(len(OwnNode.new().id), 20)
+
     def test_longID(self):
         rid = mknode().id
         n = UnvalidatedNode(rid)
-        self.assertEqual(n.long_id, long(rid[0].encode('hex'), 16))
+        self.assertEqual(n.long_id, long(rid.encode('hex'), 16))
 
     def test_distanceCalculation(self):
         ridone = mknode().id
         ridtwo = mknode().id
 
-        shouldbe = long(ridone[0].encode('hex'), 16) ^ long(ridtwo[0].encode('hex'), 16)
+        shouldbe = long(ridone.encode('hex'), 16) ^ long(ridtwo.encode('hex'), 16)
         none = UnvalidatedNode(ridone)
         ntwo = UnvalidatedNode(ridtwo)
         self.assertEqual(none.distanceTo(ntwo), shouldbe)
 
     def test_idValidation(self):
-        none = mknode(intpreid=7)
+        node = OwnNode.restore(pack('>llllllll', 0, 0, 0 ,0, 0, 0, 0, 15))
 
         # valid
-        ValidatedNode(none.id)
+        challenge = pack('>l', 244)
+        response = node.completeChallenge(challenge)
+        ValidatedNode(node.id, node.preid, challenge, response)
 
-        # invalid raises
-        temp = list(none.id[0])
+        # invalid signature raises
+        challenge = pack('>l', 244)
+        response = pack('>l', 11)
+        self.assertRaises(
+            NodeValidationError, 
+            lambda: ValidatedNode(node.id, node.preid, challenge, response))
+
+        # invalid digest raises
+        challenge = pack('>l', 244)
+        response = node.completeChallenge(challenge)
+        temp = list(node.id)
         temp[0] = 'a'
-        none.id = (''.join(temp), none.id[1])
-        self.assertRaises(NodeValidationError, lambda: ValidatedNode(none.id))
+        node.id = ''.join(temp)
+        self.assertRaises(
+            NodeValidationError, 
+            lambda: ValidatedNode(node.id, node.preid, challenge, response))
 
 
 class NodeHeapTest(unittest.TestCase):

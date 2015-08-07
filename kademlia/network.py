@@ -37,11 +37,9 @@ class Server(object):
         self.log = Logger(system=self)
         self.storage = storage or ForgetfulStorage()
         if id:
-            self.node = ValidatedNode(id)
+            self.node = OwnNode.restore(id)
         else:
-            id_src = os.urandom(20)
-            id_digest = digest(id_src)
-            self.node = ValidatedNode((id_digest, id_src))
+            self.node = OwnNode.new()
         self.protocol = KademliaProtocol(self.node, self.storage, ksize)
         self.refreshLoop = LoopingCall(self.refreshTable).start(3600)
 
@@ -100,13 +98,13 @@ class Server(object):
         # if the transport hasn't been initialized yet, wait a second
         if self.protocol.transport is None:
             return task.deferLater(reactor, 1, self.bootstrap, addrs)
-
+        
         def initTable(results):
             nodes = []
-            for addr, result in results.items():
+            for (addr, challenge), result in results.items():
                 if result[0]:
                     try:
-                        node = ValidatedNode(tuple(result[1]), addr[0], addr[1])
+                        node = ValidatedNode(tuple(result[1]) + (challenge,), addr[0], addr[1])
                     except NodeValidationError as e:
                         self.log.warning(e)
                         continue
@@ -116,7 +114,8 @@ class Server(object):
 
         ds = {}
         for addr in addrs:
-            ds[addr] = self.protocol.ping(addr, self.node.id)
+            challenge = self.getChallenge()
+            ds[(addr, challege)] = self.protocol.ping(addr, self.node.id, self.node.preid, challenge)
         return deferredDict(ds).addCallback(initTable)
 
     def inetVisibleIP(self):
@@ -147,7 +146,7 @@ class Server(object):
         # if this node has it, return it
         if self.storage.get(dkey) is not None:
             return defer.succeed(self.storage.get(dkey))
-        node = UnvalidatedNode((dkey, None))
+        node = UnvalidatedNode(dkey)
         nearest = self.protocol.router.findNeighbors(node)
         if len(nearest) == 0:
             self.log.warning("There are no known neighbors to get key %s" % key)
@@ -161,7 +160,7 @@ class Server(object):
         """
         self.log.debug("setting '%s' = '%s' on network" % (key, value))
         dkey = digest(key)
-        node = UnvalidatedNode((dkey, None))
+        node = UnvalidatedNode(dkey)
 
         def store(nodes):
             self.log.info("setting '%s' on %s" % (key, map(str, nodes)))
@@ -196,7 +195,7 @@ class Server(object):
         """
         data = { 'ksize': self.ksize,
                  'alpha': self.alpha,
-                 'id': self.node.id,
+                 'seed': self.node.seed,
                  'neighbors': self.bootstrappableNeighbors() }
         if len(data['neighbors']) == 0:
             self.log.warning("No known neighbors, so not writing to cache.")
@@ -212,7 +211,7 @@ class Server(object):
         """
         with open(fname, 'r') as f:
             data = pickle.load(f)
-        s = Server(data['ksize'], data['alpha'], data['id'])
+        s = Server(data['ksize'], data['alpha'], data['seed'])
         if len(data['neighbors']) > 0:
             s.bootstrap(data['neighbors'])
         return s

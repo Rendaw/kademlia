@@ -3,6 +3,7 @@ import time
 import operator
 from collections import OrderedDict
 
+from kademlia.node import ValidatedNode
 from kademlia.utils import OrderedSet, sharedPrefix
 
 
@@ -145,6 +146,8 @@ class RoutingTable(object):
         return self.buckets[index].isNewNode(node)
 
     def addContact(self, node):
+        if not isinstance(node, ValidatedNode):
+            raise AssertionError('All contacts must be validated')
         index = self.getBucketFor(node)
         bucket = self.buckets[index]
 

@@ -11,7 +11,6 @@ from kademlia.routing import RoutingTable
 from kademlia.log import Logger
 from kademlia.utils import digest
 
-
 class KademliaProtocol(RPCProtocol):
     def __init__(self, sourceNode, storage, ksize):
         RPCProtocol.__init__(self)
@@ -32,59 +31,72 @@ class KademliaProtocol(RPCProtocol):
     def rpc_stun(self, sender):
         return sender
 
-    def _addContact(self, sender, nodeid):
-        try:
-            source = ValidatedNode(tuple(nodeid), sender[0], sender[1])
-            self.router.addContact(source)
-            return source
-        except NodeValidationError as e:
-            self.log.warning(e)
-            return None
+    def _addContact(self, sender, nodeid, nodepreid):
+        def confirm(sender, challengeResponse):
+            details = nodeid, nodepreid, sender[0], sender[1]
+            if not self.router.isNewNode(UnvalidatedNode(nodeid[0])):
+                return False
+            try:
+                source = ValidatedNode(*details)
+                self.router.addContact(source)
+                return True
+            except NodeValidationError as e:
+                self.log.warning(e)
+                return False
+        return self.challenge(sender, self.sourceNode.getChallenge()).addCallback(confirm)
 
-    def rpc_ping(self, sender, nodeid):
-        self._addContact(sender, nodeid)
-        return self.sourceNode.id
+    def rpc_challenge(self, sender, challenge):
+        return self.sourceNode.completeChallenge(challenge)
 
-    def rpc_store(self, sender, nodeid, key, value):
-        source = self._addContact(sender, nodeid)
-        if not source:
-            return True
-        self.router.addContact(source)
-        self.log.debug("got a store request from %s, storing value" % str(sender))
-        self.storage[key] = value
+    def rpc_ping(self, sender, nodeid, nodepreid, challenge):
+        self._addContact(sender, nodeid, nodepreid)
+        return (
+            self.sourceNode.id, 
+            self.sourceNode.preid, 
+            self.sourceNode.completeChallenge(challenge),
+        )
+
+    def rpc_store(self, sender, nodeid, nodepreid, key, value):
+        d = self._addContact(sender, nodeid, nodepreid)
+        def store(source):
+            if not source:
+                return
+            self.log.debug("got a store request from %s, storing value" % str(sender))
+            self.storage[key] = value
+        d.addCallback(store)
         return True
 
-    def rpc_find_node(self, sender, nodeid, key):
+    def rpc_find_node(self, sender, nodeid, nodepreid, key):
         self.log.info("finding neighbors of {} in local table".format(format_nodeid(nodeid)))
-        source = self._addContact(sender, nodeid)
-        node = UnvalidatedNode((key, None))
-        return map(tuple, self.router.findNeighbors(node, exclude=source))
+        self._addContact(sender, nodeid, nodepreid)
+        node = UnvalidatedNode(key)
+        return map(tuple, self.router.findNeighbors(node, exclude=UnvalidatedNode(nodeid)))
 
-    def rpc_find_value(self, sender, nodeid, key):
-        self._addContact(sender, nodeid)
+    def rpc_find_value(self, sender, nodeid, nodepreid, key):
+        self._addContact(sender, nodeid, nodepreid)
         value = self.storage.get(key, None)
         if value is None:
-            return self.rpc_find_node(sender, nodeid, key)
+            return self.rpc_find_node(sender, nodeid, nodepreid, key)
         return { 'value': value }
 
     def callFindNode(self, nodeToAsk, nodeToFind):
         address = (nodeToAsk.ip, nodeToAsk.port)
-        d = self.find_node(address, self.sourceNode.id, nodeToFind.id[0])
+        d = self.find_node(address, self.sourceNode.id, self.sourceNode.preid, nodeToFind.id)
         return d.addCallback(self.handleCallResponse, nodeToAsk)
 
     def callFindValue(self, nodeToAsk, nodeToFind):
         address = (nodeToAsk.ip, nodeToAsk.port)
-        d = self.find_value(address, self.sourceNode.id, nodeToFind.id[0])
+        d = self.find_value(address, self.sourceNode.id, self.sourceNode.preid, nodeToFind.id)
         return d.addCallback(self.handleCallResponse, nodeToAsk)
 
     def callPing(self, nodeToAsk):
         address = (nodeToAsk.ip, nodeToAsk.port)
-        d = self.ping(address, self.sourceNode.id)
+        d = self.ping(address, self.sourceNode.id, self.sourceNode.preid, self.sourceNode.generateChallenge())
         return d.addCallback(self.handleCallResponse, nodeToAsk)
 
     def callStore(self, nodeToAsk, key, value):
         address = (nodeToAsk.ip, nodeToAsk.port)
-        d = self.store(address, self.sourceNode.id, key, value)
+        d = self.store(address, self.sourceNode.id, self.sourceNode.preid, key, value)
         return d.addCallback(self.handleCallResponse, nodeToAsk)
 
     def transferKeyValues(self, node):
@@ -102,7 +114,7 @@ class KademliaProtocol(RPCProtocol):
         """
         ds = []
         for key, value in self.storage.iteritems():
-            keynode = UnvalidatedNode((digest(key), None))
+            keynode = UnvalidatedNode(digest(key))
             neighbors = self.router.findNeighbors(keynode)
             if len(neighbors) > 0:
                 newNodeClose = node.distanceTo(keynode) < neighbors[-1].distanceTo(keynode)

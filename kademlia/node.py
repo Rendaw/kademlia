@@ -1,13 +1,13 @@
 from operator import itemgetter
 import heapq
 from kademlia.utils import digest
+import nacl.signing
+import nacl.utils
+from nacl.encoding import RawEncoder as rawenc
 
 
-def format_nodeid(id):
-    return (
-        long(id[0].encode('hex'), 16),
-        long(id[1].encode('hex'), 16) if id[1] is not None else None
-    )
+def format_nodeid(nodeid):
+    return '{:.6}...'.format(nodeid.encode('hex'))
 
 
 class NodeValidationError(RuntimeError):
@@ -21,7 +21,7 @@ class Node:
         self.id = id
         self.ip = ip
         self.port = port
-        self.long_id = long(id[0].encode('hex'), 16)
+        self.long_id = long(id.encode('hex'), 16)
 
     def sameHomeAs(self, node):
         return self.ip == node.ip and self.port == node.port
@@ -51,12 +51,53 @@ class UnvalidatedNode(Node):
 
 
 class ValidatedNode(Node):
-    def __init__(self, id, ip=None, port=None):
-        if id[0] != digest(id[1]):
-            raise NodeValidationError(
-                "Encountered host node with invalid id: {} at {}:{}".format(format_nodeid(id), ip, port) if ip and port else
-                "Local host node id is invalid: {}".format(format_nodeid(id)))
+    preid = None
+
+    def __init__(self, id, preid, challenge, response, ip=None, port=None):
         Node.__init__(self, id, ip, port, True)
+        self.preid = preid
+        verify_key = nacl.signing.VerifyKey(preid, encoder=rawenc)
+        def fail():
+            raise NodeValidationError(
+                "Encountered host node with invalid id: {} at {}".format(
+                    format_nodeid(id), self))
+        try:
+            verify_key.verify(challenge, response, encoder=rawenc)
+        except nacl.exceptions.BadSignatureError:
+            fail()
+        if digest(preid) != id:
+            fail()
+
+
+class OwnNode(Node):
+    seed = None
+    key = None
+    preid = None
+
+    @staticmethod
+    def _finish_init(cls, seed):
+        key = nacl.signing.SigningKey(seed, encoder=rawenc)
+        verify_key = key.verify_key.encode(encoder=rawenc)
+        self = cls(digest(verify_key), None, None, True)
+        self.seed = seed
+        self.key = key
+        self.preid = verify_key
+        return self
+
+    @classmethod
+    def new(cls):
+        seed = nacl.utils.random()
+        return OwnNode._finish_init(cls, seed)
+
+    @classmethod
+    def restore(cls, seed):
+        return OwnNode._finish_init(cls, seed)
+    
+    def completeChallenge(self, challenge):
+        return self.key.sign(challenge).signature
+
+    def generateChallenge(self):
+        return nacl.utils.random()
 
 
 class NodeHeap(object):
