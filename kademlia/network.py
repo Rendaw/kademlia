@@ -11,7 +11,7 @@ from kademlia.log import Logger
 from kademlia.protocol import KademliaProtocol
 from kademlia.utils import deferredDict, digest
 from kademlia.storage import ForgetfulStorage
-from kademlia.node import ValidatedNode, UnvalidatedNode, NodeValidationError
+from kademlia.node import ValidatedNode, UnvalidatedNode, OwnNode, NodeValidationError
 from kademlia.crawling import ValueSpiderCrawl
 from kademlia.crawling import NodeSpiderCrawl
 
@@ -22,7 +22,7 @@ class Server(object):
     to start listening as an active node on the network.
     """
 
-    def __init__(self, ksize=20, alpha=3, id=None, storage=None):
+    def __init__(self, ksize=20, alpha=3, seed=None, storage=None):
         """
         Create a server instance.  This will start listening on the given port.
 
@@ -36,8 +36,8 @@ class Server(object):
         self.alpha = alpha
         self.log = Logger(system=self)
         self.storage = storage or ForgetfulStorage()
-        if id:
-            self.node = OwnNode.restore(id)
+        if seed:
+            self.node = OwnNode.restore(seed)
         else:
             self.node = OwnNode.new()
         self.protocol = KademliaProtocol(self.node, self.storage, ksize)
@@ -104,7 +104,7 @@ class Server(object):
             for (addr, challenge), result in results.items():
                 if result[0]:
                     try:
-                        node = ValidatedNode(tuple(result[1]) + (challenge,), addr[0], addr[1])
+                        node = ValidatedNode(result[1][0], result[1][1], challenge, result[1][2], addr[0], addr[1])
                     except NodeValidationError as e:
                         self.log.warning(e)
                         continue
@@ -114,8 +114,8 @@ class Server(object):
 
         ds = {}
         for addr in addrs:
-            challenge = self.getChallenge()
-            ds[(addr, challege)] = self.protocol.ping(addr, self.node.id, self.node.preid, challenge)
+            challenge = self.node.generateChallenge()
+            ds[(addr, challenge)] = self.protocol.ping(addr, self.node.id, self.node.preid, challenge)
         return deferredDict(ds).addCallback(initTable)
 
     def inetVisibleIP(self):

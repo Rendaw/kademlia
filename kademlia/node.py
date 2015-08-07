@@ -68,6 +68,12 @@ class ValidatedNode(Node):
         if digest(preid) != id:
             fail()
 
+    def __iter__(self):
+        """
+        Enables use of Node as a tuple - i.e., tuple(node) works.
+        """
+        return iter([self.id, self.preid, self.ip, self.port])
+
 
 class OwnNode(Node):
     seed = None
@@ -92,12 +98,18 @@ class OwnNode(Node):
     @classmethod
     def restore(cls, seed):
         return OwnNode._finish_init(cls, seed)
-    
+
     def completeChallenge(self, challenge):
         return self.key.sign(challenge).signature
 
     def generateChallenge(self):
         return nacl.utils.random()
+
+    def __iter__(self):
+        """
+        Enables use of Node as a tuple - i.e., tuple(node) works.
+        """
+        return iter([self.id, self.preid, self.ip, self.port])
 
 
 class NodeHeap(object):

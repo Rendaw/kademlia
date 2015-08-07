@@ -1,8 +1,10 @@
 from collections import Counter
 
+from twisted.internet import defer
+
 from kademlia.log import Logger
 from kademlia.utils import deferredDict
-from kademlia.node import Node, NodeHeap
+from kademlia.node import Node, NodeHeap, NodeValidationError, ValidatedNode
 
 
 class SpiderCrawl(object):
@@ -61,6 +63,30 @@ class SpiderCrawl(object):
         return deferredDict(ds).addCallback(self._nodesFound)
 
 
+    def _validateNodes(self, nodes):
+        """
+        Challenge and validate returned nodes.
+        """
+        challenges = []
+        def build(results):
+            collected = []
+            for (success1, (success2, response)), (id, preid, host, port), challenge in zip(results, nodes, challenges):
+                if not success1 or not success2:
+                    continue
+                try:
+                    node = ValidatedNode(id, preid, challenge, response, host, port)
+                except NodeValidationError:
+                    continue
+                collected.append(node)
+            self.nearest.push(collected)
+        ds = []
+        for id, preid, host, port in nodes:
+            challenge = self.protocol.sourceNode.generateChallenge()
+            challenges.append(challenge)
+            ds.append(self.protocol.challenge((host, port), challenge))
+        return defer.DeferredList(ds).addCallback(build)
+
+
 class ValueSpiderCrawl(SpiderCrawl):
     def __init__(self, protocol, node, peers, ksize, alpha):
         SpiderCrawl.__init__(self, protocol, node, peers, ksize, alpha)
@@ -80,6 +106,7 @@ class ValueSpiderCrawl(SpiderCrawl):
         """
         toremove = []
         foundValues = []
+        ds = []
         for peerid, response in responses.items():
             response = RPCFindResponse(response)
             if not response.happened():
@@ -89,7 +116,7 @@ class ValueSpiderCrawl(SpiderCrawl):
             else:
                 peer = self.nearest.getNodeById(peerid)
                 self.nearestWithoutValue.push(peer)
-                self.nearest.push(response.getNodeList())
+                ds.append(self._validateNodes(response.getNodeDetailList()))
         self.nearest.remove(toremove)
 
         if len(foundValues) > 0:
@@ -97,7 +124,7 @@ class ValueSpiderCrawl(SpiderCrawl):
         if self.nearest.allBeenContacted():
             # not found!
             return None
-        return self.find()
+        return defer.DeferredList(ds).addCallback(lambda ign: self.find())
 
     def _handleFoundValues(self, values):
         """
@@ -114,7 +141,7 @@ class ValueSpiderCrawl(SpiderCrawl):
 
         peerToSaveTo = self.nearestWithoutValue.popleft()
         if peerToSaveTo is not None:
-            d = self.protocol.callStore(peerToSaveTo, self.node.id[0], value)
+            d = self.protocol.callStore(peerToSaveTo, self.node.id, self.node.preid, value)
             return d.addCallback(lambda _: value)
         return value
 
@@ -131,17 +158,18 @@ class NodeSpiderCrawl(SpiderCrawl):
         Handle the result of an iteration in _find.
         """
         toremove = []
+        ds = []
         for peerid, response in responses.items():
             response = RPCFindResponse(response)
             if not response.happened():
                 toremove.append(peerid)
             else:
-                self.nearest.push(response.getNodeList())
+                ds.append(self._validateNodes(response.getNodeDetailList()))
         self.nearest.remove(toremove)
 
         if self.nearest.allBeenContacted():
             return list(self.nearest)
-        return self.find()
+        return defer.DeferredList(ds).addCallback(lambda ign: self.find())
 
 
 class RPCFindResponse(object):
@@ -168,18 +196,9 @@ class RPCFindResponse(object):
     def getValue(self):
         return self.response[1]['value']
 
-    def getNodeList(self):
+    def getNodeDetailList(self):
         """
         Get the node list in the response.  If there's no value, this should
         be set.
         """
-        nodelist = self.response[1] or []
-        out = []
-        for nodeple in nodelist:
-            try:
-                node = ValidatedNode(*nodeple)
-            except NodeValidationError as e:
-                #  TODO log
-                continue
-            out.append(node)
-        return out
+        return self.response[1] or []

@@ -32,8 +32,11 @@ class KademliaProtocol(RPCProtocol):
         return sender
 
     def _addContact(self, sender, nodeid, nodepreid):
-        def confirm(sender, challengeResponse):
-            details = nodeid, nodepreid, sender[0], sender[1]
+        challenge = self.sourceNode.generateChallenge()
+        def confirm(response):
+            if not response[0]:
+                return False
+            details = nodeid, nodepreid, challenge, response[1], sender[0], sender[1]
             if not self.router.isNewNode(UnvalidatedNode(nodeid[0])):
                 return False
             try:
@@ -43,7 +46,7 @@ class KademliaProtocol(RPCProtocol):
             except NodeValidationError as e:
                 self.log.warning(e)
                 return False
-        return self.challenge(sender, self.sourceNode.getChallenge()).addCallback(confirm)
+        return self.challenge(sender, challenge).addCallback(confirm)
 
     def rpc_challenge(self, sender, challenge):
         return self.sourceNode.completeChallenge(challenge)
