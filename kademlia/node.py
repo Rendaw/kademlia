@@ -65,10 +65,10 @@ class ValidatedNode(Node):
                 "Encountered host node ({}) with invalid id: {}".format(
                     self,
                     json.dumps({
-                        'id': id.format('hex'),
-                        'preid': preid.format('hex'),
-                        'challenge': challenge.format('hex'),
-                        'response': response.format('hex'),
+                        'id': id.encode('hex'),
+                        'preid': preid.encode('hex'),
+                        'challenge': challenge.encode('hex'),
+                        'response': response.encode('hex'),
                     }, indent=4),
                 ))
         try:

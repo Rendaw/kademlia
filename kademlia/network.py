@@ -44,8 +44,8 @@ class Server(object):
         self.log.debug(
             'Own node: {}'.format(
                 json.dumps({
-                    'id': self.node.id.format('hex'),
-                    'preid': self.node.preid.format('hex'),
+                    'id': self.node.id.encode('hex'),
+                    'preid': self.node.preid.encode('hex'),
                 }, indent=4),
             )
         )
