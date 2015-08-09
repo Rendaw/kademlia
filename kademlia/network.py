@@ -3,6 +3,7 @@ Package for interacting on the network at a high level.
 """
 import os
 import pickle
+import json
 
 from twisted.internet.task import LoopingCall
 from twisted.internet import defer, reactor, task
@@ -40,6 +41,14 @@ class Server(object):
             self.node = OwnNode.restore(seed)
         else:
             self.node = OwnNode.new()
+        self.log.debug(
+            'Own node: {}'.format(
+                json.dumps({
+                    'id': self.node.id.format('hex'),
+                    'preid': self.node.preid.format('hex'),
+                }, indent=4),
+            )
+        )
         self.protocol = KademliaProtocol(self.node, self.storage, ksize)
         self.refreshLoop = LoopingCall(self.refreshTable).start(3600)
 

@@ -1,9 +1,12 @@
 from operator import itemgetter
 import heapq
-from kademlia.utils import digest
+import json
+
 import nacl.signing
 import nacl.utils
 from nacl.encoding import RawEncoder as rawenc
+
+from kademlia.utils import digest
 
 
 def format_nodeid(nodeid):
@@ -59,8 +62,15 @@ class ValidatedNode(Node):
         verify_key = nacl.signing.VerifyKey(preid, encoder=rawenc)
         def fail():
             raise NodeValidationError(
-                "Encountered host node with invalid id: {} at {}".format(
-                    format_nodeid(id), self))
+                "Encountered host node ({}) with invalid id: {}".format(
+                    self,
+                    json.dumps({
+                        'id': id.format('hex'),
+                        'preid': preid.format('hex'),
+                        'challenge': challenge.format('hex'),
+                        'response': response.format('hex'),
+                    }, indent=4),
+                ))
         try:
             verify_key.verify(challenge, response, encoder=rawenc)
         except nacl.exceptions.BadSignatureError:
